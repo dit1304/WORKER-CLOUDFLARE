@@ -1665,7 +1665,7 @@ async function handleStartCommand(chatId, username, userInfo = null) {
   const welcomeMessage = `👋 *Selamat datang ${username} di Bot Multi-Fungsi!*
 
 🔥 *Fitur Utama:*
-1️⃣ *Cek Kuota XL*
+1️⃣ *Cek Kuota*
    • Kirim nomor telepon untuk cek kuota
    • Contoh: \`081234567890\`
    • Bisa cek multiple nomor dengan spasi/koma
@@ -1802,10 +1802,10 @@ async function handleBandwidthCommand(chatId) {
 
 // Function to handle /kuota command
 async function handleKuotaCommand(chatId, username) {
-  const message = `👋 *Panduan Cek Kuota XL*
+  const message = `👋 *Panduan Cek Kuota*
 
 📱 *Cara Menggunakan:*
-1. Kirim nomor telepon XL Anda
+1. Kirim nomor telepon (IM3/Tri/XL/Axis) Anda
 2. Format: \`081234567890\`
 3. Bisa cek multiple nomor:
    • Dengan spasi: \`081234567890 082345678901\`
@@ -2429,7 +2429,7 @@ async function handleHelpCommand(chatId) {
 
 *Perintah Utama:*
 • /start - Memulai bot dan melihat pesan selamat datang
-• /kuota - Panduan untuk cek kuota XL
+• /kuota - Panduan cek kuota (IM3, Tri, XL, Axis)
 • /proxy - Mendapatkan daftar proxy random
 • /proxy [kode negara] - Mendapatkan proxy dari negara tertentu
 • /bandwidth - Cek penggunaan bandwidth 10 hari terakhir
@@ -2438,8 +2438,8 @@ async function handleHelpCommand(chatId) {
 
 *Cara Menggunakan:*
 
-1️⃣ *Cek Kuota XL*
-   • Kirim nomor telepon XL: \`081234567890\`
+1️⃣ *Cek Kuota*
+   • Kirim nomor telepon (IM3/Tri/XL/Axis): \`081234567890\`
    • Cek multiple nomor: \`081234567890,082345678901\`
 
 2️⃣ *Cek Proxy*
@@ -3257,7 +3257,7 @@ ss://...`
     await sendMessage(chatId, responseMessage);
     
   } else if (text) {
-    // Treat sebagai daftar nomor XL (dipakai di handler kuota kamu)
+    // Treat sebagai daftar nomor (cek kuota) (dipakai di handler kuota kamu)
     const numbers = text.split(/[\s,]+/).filter(num => /^\d+$/.test(num));
     if (numbers.length > 0) {
       const greeting = `👋 Halo ${username}!\n\n`;
