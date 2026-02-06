@@ -20,8 +20,7 @@ async function syncUsersToGitHub(users) {
     const filePath = 'users.json';
     const apiUrl = `https://api.github.com/repos/${repo}/contents/${filePath}`;
 
-    const kvBulk = users.map(id => ({ key: id, value: JSON.stringify({ registered: true }) }));
-    const newContent = btoa(unescape(encodeURIComponent(JSON.stringify(kvBulk, null, 2))));
+    const newContent = btoa(unescape(encodeURIComponent(JSON.stringify(users, null, 2))));
 
     let sha = null;
     try {
@@ -66,6 +65,52 @@ async function syncUsersToGitHub(users) {
     }
   } catch (error) {
     console.error('GitHub sync error:', error);
+  }
+}
+
+
+// ============================================
+// Auto-Seed: Baca users.json dari GitHub repo
+// lalu import ke KV saat pertama kali bot jalan
+// ============================================
+let _seedDone = false;
+
+async function seedUsersFromGitHub() {
+  if (_seedDone) return;
+  _seedDone = true;
+  try {
+    if (typeof GITHUB_TOKEN_ENV === 'undefined' || !GITHUB_TOKEN_ENV ||
+        typeof GITHUB_REPO_ENV === 'undefined' || !GITHUB_REPO_ENV) {
+      console.log('Seed skipped: GITHUB_TOKEN or GITHUB_REPO not set');
+      return;
+    }
+    const existing = await BOT_USERS.get('users', 'json') || [];
+    const repo = GITHUB_REPO_ENV;
+    const apiUrl = `https://api.github.com/repos/${repo}/contents/users.json`;
+    const response = await fetch(apiUrl, {
+      headers: {
+        'Authorization': `Bearer ${GITHUB_TOKEN_ENV}`,
+        'Accept': 'application/vnd.github.v3+json',
+        'User-Agent': 'CF-Worker-Bot'
+      }
+    });
+    if (!response.ok) {
+      console.log('users.json not found in GitHub repo, skipping seed');
+      return;
+    }
+    const data = await response.json();
+    const decoded = decodeURIComponent(escape(atob(data.content)));
+    const githubUsers = JSON.parse(decoded);
+    if (!Array.isArray(githubUsers) || githubUsers.length === 0) return;
+    if (existing.length >= githubUsers.length) {
+      console.log('KV users already up to date (' + existing.length + ' users), skipping seed');
+      return;
+    }
+    const merged = [...new Set([...existing, ...githubUsers.map(String)])];
+    await BOT_USERS.put('users', JSON.stringify(merged));
+    console.log('Auto-seed from GitHub: ' + merged.length + ' users imported to KV (was ' + existing.length + ')');
+  } catch (error) {
+    console.error('Auto-seed error:', error);
   }
 }
 
@@ -1203,7 +1248,7 @@ async function handleBroadcastCommand(chatId, username) {
 // =====================================================
 // REPLIT BROADCAST CONFIG - GANTI DENGAN URL DAN SECRET ANDA
 // =====================================================
-const REPLIT_BROADCAST_URL = 'https://zerostore-api.replit.app/api/broadcast';
+const REPLIT_BROADCAST_URL = 'https://api-broadcast.replit.app/api/broadcast';
 const BROADCAST_SECRET = 'zerostore';
 
 // =====================================================
@@ -2528,6 +2573,7 @@ async function handleClashCommand(chatId, rawText) {
 
 // Main request handler
 async function handleRequest(request, event) {
+  await seedUsersFromGitHub();
   const { pathname } = new URL(request.url);
 
   if (pathname !== '/webhook') {
