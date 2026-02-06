@@ -189,7 +189,19 @@ async function cekKuotaXLAxis(number) {
 
 // ====== FUNGSI UTAMA: AUTO DETECT OPERATOR ======
 async function cekKuota(number) {
-  return '*Fitur Cek Kuota Sedang Gangguan*\n\nMohon maaf, layanan cek kuota sedang dalam perbaikan.\nSilakan coba lagi nanti.\n\nPanduan penggunaan: /start';
+  const carrier = detectCarrier(number);
+
+  if (!carrier) {
+    return 'Nomor ' + number + ' tidak dikenali sebagai IM3, Tri, XL, atau Axis.\nPastikan format nomor benar (contoh: 081234567890).';
+  }
+
+  if (carrier === 'INDOSAT' || carrier === 'TRI') {
+    return await cekKuotaIndosatTri(number);
+  }
+
+  if (carrier === 'XL' || carrier === 'AXIS') {
+    return await cekKuotaXLAxis(number);
+  }
 }
 
 async function handleKuotaCommand(chatId, username) {
