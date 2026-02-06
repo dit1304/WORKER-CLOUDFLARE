@@ -1,18 +1,278 @@
-// ============================================
-// Environment variables are injected by Wrangler
-// from GitHub Secrets via wrangler.toml [vars]
-// DO NOT hardcode secrets here!
-// ============================================
+// ====== DETEKSI OPERATOR ======
+function detectCarrier(msisdn) {
+  let num = msisdn.replace(/\D/g, '');
+  if (num.startsWith('62')) num = '0' + num.slice(2);
+  if (!num.startsWith('0')) num = '0' + num;
 
+  const prefix4 = num.slice(0, 4);
 
-// ============================================
-// GitHub Sync: Auto-update users.json di GitHub
-// ketika ada user baru daftar atau dihapus
-// ============================================
-async function syncUsersToGitHub(users) {
+  const indosat = ['0814','0815','0816','0855','0856','0857','0858','0885','0886','0887','0888','0889'];
+  const tri     = ['0895','0896','0897','0898','0899'];
+  const xl      = ['0817','0818','0819','0859','0877','0878'];
+  const axis    = ['0831','0832','0833','0838'];
+
+  if (indosat.includes(prefix4)) return 'INDOSAT';
+  if (tri.includes(prefix4))     return 'TRI';
+  if (xl.includes(prefix4))      return 'XL';
+  if (axis.includes(prefix4))    return 'AXIS';
+  return null;
+}
+
+function normalizeMsisdn(number) {
+  let num = number.replace(/\D/g, '');
+  if (num.startsWith('0')) num = '62' + num.slice(1);
+  if (!num.startsWith('62')) num = '62' + num;
+  return num;
+}
+
+// ====== API 1: IM3 & TRI ======
+async function cekKuotaIndosatTri(number) {
+  const msisdn = normalizeMsisdn(number);
+  const url = 'https://misc-api.kmsp-store.com/simple-api/quota/v1/check';
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+
   try {
-    if (typeof GITHUB_TOKEN_ENV === 'undefined' || !GITHUB_TOKEN_ENV ||
-        typeof GITHUB_REPO_ENV === 'undefined' || !GITHUB_REPO_ENV) {
+    const resp = await fetch(url, {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36'
+      },
+      body: JSON.stringify({ msisdn })
+    });
+    clearTimeout(timer);
+
+    if (!resp.ok) throw new Error('HTTP ' + resp.status + ' ' + resp.statusText);
+
+    const data = await resp.json();
+    if (!data.status || !data.data) {
+      return 'Gagal mengambil data untuk ' + number + '.
+Pesan: ' + (data.message || 'Unknown');
+    }
+
+    const cust = data.data.customer;
+    const pkgs = data.data.packages || [];
+
+    let out = '';
+    out += '*Info Pelanggan:*
+';
+    out += 'Nomor: ' + cust.msisdn + '
+';
+    out += 'Status: ' + cust.status + '
+';
+    out += 'Kelas Layanan: ' + (cust.serviceClass || '-') + '
+';
+
+    if (cust.balance) {
+      out += 'Pulsa: ' + (cust.balance.text || 'Rp' + cust.balance.amount) + '
+';
+    }
+
+    out += '
+*Paket Aktif:*
+';
+    if (!pkgs.length) {
+      out += 'Tidak ada paket aktif.
+';
+    } else {
+      for (const pkg of pkgs) {
+        out += 'Paket: ' + (pkg.title || '(Tidak diketahui)') + '
+';
+        out += 'Aktif: ' + (pkg.activated_at || '-') + ' s/d ' + (pkg.ended_at || '-') + '
+';
+        const items = pkg.items || [];
+        for (const item of items) {
+          out += '  Benefit: ' + (item.name || '-') + '
+';
+          out += '  Sisa: ' + (item.remaining_text || '-') + '
+';
+          out += '  Expired: ' + (item.expired_at || '-') + '
+';
+        }
+        out += '------------------------------
+';
+      }
+    }
+
+    out += '
+Panduan penggunaan: /start';
+    return out;
+
+  } catch (err) {
+    clearTimeout(timer);
+    const reason = err.name === 'AbortError' ? 'Timeout: server lambat' : err.message;
+    return 'Terjadi kesalahan saat cek kuota ' + number + ': ' + reason;
+  }
+}
+
+// ====== API 2: XL & AXIS ======
+async function cekKuotaXLAxis(number) {
+  const msisdn = normalizeMsisdn(number);
+  const timestamp = Date.now();
+  const url = 'https://apigw.kmsp-store.com/sidompul/v4/cek_kuota?msisdn=' + msisdn + '&isJSON=true&_=' + timestamp;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+
+  try {
+    const resp = await fetch(url, {
+      method: 'GET',
+      signal: controller.signal,
+      headers: {
+        'Accept': 'application/json, text/javascript, */*; q=0.01',
+        'Authorization': 'Basic c2RvbXB1bDpkMzFyMjhwNkE=',
+        'X-Api-Key': '65ef29aa-a668-4b68-90ae-20951ef90c55',
+        'X-App-Version': '4.0.0',
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36'
+      }
+    });
+    clearTimeout(timer);
+
+    if (!resp.ok) throw new Error('HTTP ' + resp.status + ' ' + resp.statusText);
+
+    const raw = await resp.text();
+    let data;
+    try { data = JSON.parse(raw); } catch { data = { raw }; }
+
+    const sp = data?.data?.data_sp;
+    const rMsisdn = data?.data?.msisdn || msisdn;
+
+    if (!sp) {
+      return 'Gagal mengambil data untuk ' + number + '.
+Respon: ' + raw.slice(0, 500);
+    }
+
+    let out = '';
+    out += '*Info Pelanggan:*
+';
+    out += 'Nomor: ' + rMsisdn + '
+';
+    out += 'Tipe Kartu: ' + (sp.prefix?.value ?? '-') + '
+';
+    out += 'Status 4G: ' + (sp.status_4g?.value ?? '-') + '
+';
+    out += 'Dukcapil: ' + (sp.dukcapil?.value ?? '-') + '
+';
+
+    if (sp.status_volte?.success && typeof sp.status_volte.value === 'object') {
+      const v = sp.status_volte.value;
+      const ya = 'Ya', tdk = 'Tidak';
+      out += 'VoLTE: Device ' + (v.device ? ya : tdk) + ' | Area ' + (v.area ? ya : tdk) + ' | SIM ' + (v.simcard ? ya : tdk) + '
+';
+    }
+
+    out += 'Umur Kartu: ' + (sp.active_card?.value ?? '-') + '
+';
+    out += 'Masa Aktif: ' + (sp.active_period?.value ?? '-') + '
+';
+    out += 'Tenggang: ' + (sp.grace_period?.value ?? '-') + '
+';
+
+    out += '
+*Paket Aktif:*
+';
+    const quotaList = Array.isArray(sp.quotas?.value) ? sp.quotas.value : [];
+
+    if (!quotaList.length) {
+      out += 'Tidak ada paket aktif.
+';
+    } else {
+      for (const group of quotaList) {
+        const items = Array.isArray(group) ? group : [group];
+        for (const item of items) {
+          const pkg = item.packages || {};
+          const benefits = item.benefits || [];
+
+          out += 'Paket: ' + (pkg.name || '(Tidak diketahui)') + '
+';
+          if (pkg.expDate) {
+            const exp = new Date(pkg.expDate);
+            out += 'Expired: ' + exp.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) + ' ' + exp.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + '
+';
+          }
+          for (const b of benefits) {
+            out += '  Benefit: ' + (b.bname || '-') + ' (' + (b.type || '-') + ')
+';
+            out += '  Kuota: ' + (b.quota || '-') + ' | Sisa: ' + (b.remaining || '-') + '
+';
+          }
+          out += '------------------------------
+';
+        }
+      }
+    }
+
+    if (data?.data?.hasil && /batas maksimal pengecekan/i.test(String(data.data.hasil))) {
+      out += '
+*Batas pengecekan tercapai.* Silakan coba lagi nanti.';
+    }
+
+    out += '
+Panduan penggunaan: /start';
+    return out;
+
+  } catch (err) {
+    clearTimeout(timer);
+    const reason = err.name === 'AbortError' ? 'Timeout: server lambat' : err.message;
+    return 'Terjadi kesalahan saat cek kuota ' + number + ': ' + reason;
+  }
+}
+
+// ====== FUNGSI UTAMA: AUTO DETECT OPERATOR ======
+async function cekKuota(number) {
+  const carrier = detectCarrier(number);
+
+  if (!carrier) {
+    return 'Nomor ' + number + ' tidak dikenali sebagai IM3, Tri, XL, atau Axis.
+Pastikan format nomor benar (contoh: 081234567890).';
+  }
+
+  if (carrier === 'INDOSAT' || carrier === 'TRI') {
+    return await cekKuotaIndosatTri(number);
+  }
+
+  if (carrier === 'XL' || carrier === 'AXIS') {
+    return await cekKuotaXLAxis(number);
+  }
+}
+
+// Function to handle /kuota command
+async function handleKuotaCommand(chatId, username) {
+  const message = '*Panduan Cek Kuota*
+
+' +
+    '*Operator yang Didukung:*
+' +
+    'IM3, Tri (3), XL, Axis
+
+' +
+    '*Cara Menggunakan:*
+' +
+    '1. Kirim nomor telepon Anda
+' +
+    '2. Format: 081234567890
+' +
+    '3. Bisa cek multiple nomor:
+' +
+    '   Dengan spasi: 081234567890 082345678901
+' +
+    '   Dengan koma: 081234567890,082345678901
+
+' +
+    '*Informasi yang Ditampilkan:*
+' +
+    'Status Kartu, Masa Aktif, Kuota Tersisa, Paket Aktif, Detail Benefit
+
+' +
+    'Update Status: Real-time';
+
+  await sendMessage(chatId, message);
+}
       console.log('GitHub sync disabled: GITHUB_TOKEN or GITHUB_REPO not set');
       return;
     }
