@@ -116,7 +116,12 @@ async function cekKuotaXLAxis(number) {
     });
     clearTimeout(timer);
 
-    if (!resp.ok) throw new Error('HTTP ' + resp.status + ' ' + resp.statusText);
+    if (!resp.ok) {
+      if (resp.status === 401) {
+        return '\u26A0\uFE0F *Cek Kuota XL/Axis*\n\nMaaf, layanan cek kuota XL/Axis sedang tidak tersedia.\nSilakan coba lagi nanti atau gunakan aplikasi myXL/AXISnet.\n\n\uD83D\uDCD6 Panduan penggunaan: /start';
+      }
+      throw new Error('HTTP ' + resp.status + ' ' + resp.statusText);
+    }
 
     const data = await resp.json();
 
