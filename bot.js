@@ -25,22 +25,24 @@ function normalizeMsisdn(number) {
   return num;
 }
 
-// ====== API 1: IM3 & TRI ======
+// ====== PROXY URL (Replit server forwards to kmsp API) ======
+const QUOTA_PROXY_URL = 'https://zerostore-api.replit.app';
+const QUOTA_PROXY_SECRET = 'zerostore';
+
+// ====== API 1: IM3 & TRI (via Replit proxy) ======
 async function cekKuotaIndosatTri(number) {
   const msisdn = normalizeMsisdn(number);
-  const url = 'https://misc-api.kmsp-store.com/simple-api/quota/v1/check';
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 15000);
+  const timer = setTimeout(() => controller.abort(), 20000);
 
   try {
-    const resp = await fetch(url, {
+    const resp = await fetch(QUOTA_PROXY_URL + '/api/quota/indosat-tri', {
       method: 'POST',
       signal: controller.signal,
       headers: {
         'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36'
+        'Authorization': 'Bearer ' + QUOTA_PROXY_SECRET
       },
       body: JSON.stringify({ msisdn })
     });
@@ -93,41 +95,32 @@ async function cekKuotaIndosatTri(number) {
   }
 }
 
-// ====== API 2: XL & AXIS ======
+// ====== API 2: XL & AXIS (via Replit proxy) ======
 async function cekKuotaXLAxis(number) {
   const msisdn = normalizeMsisdn(number);
-  const timestamp = Date.now();
-  const url = 'https://apigw.kmsp-store.com/sidompul/v4/cek_kuota?msisdn=' + msisdn + '&isJSON=true&_=' + timestamp;
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 15000);
+  const timer = setTimeout(() => controller.abort(), 20000);
 
   try {
-    const resp = await fetch(url, {
+    const resp = await fetch(QUOTA_PROXY_URL + '/api/quota/xl-axis?msisdn=' + msisdn, {
       method: 'GET',
       signal: controller.signal,
       headers: {
-        'Accept': 'application/json, text/javascript, */*; q=0.01',
-        'Authorization': 'Basic c2RvbXB1bDpkMzFyMjhwNkE=',
-        'X-Api-Key': '65ef29aa-a668-4b68-90ae-20951ef90c55',
-        'X-App-Version': '4.0.0',
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36'
+        'Authorization': 'Bearer ' + QUOTA_PROXY_SECRET
       }
     });
     clearTimeout(timer);
 
     if (!resp.ok) throw new Error('HTTP ' + resp.status + ' ' + resp.statusText);
 
-    const raw = await resp.text();
-    let data;
-    try { data = JSON.parse(raw); } catch { data = { raw }; }
+    const data = await resp.json();
 
     const sp = data?.data?.data_sp;
     const rMsisdn = data?.data?.msisdn || msisdn;
 
     if (!sp) {
-      return 'Gagal mengambil data untuk ' + number + '.\nRespon: ' + raw.slice(0, 500);
+      return 'Gagal mengambil data untuk ' + number + '.\nAPI sedang tidak tersedia, coba lagi nanti.';
     }
 
     let out = '';
