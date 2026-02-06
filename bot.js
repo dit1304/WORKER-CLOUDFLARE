@@ -1992,6 +1992,9 @@ async function processMessage(message, chatId) {
 
 // Function to format API response
 function formatApiResponse(data) {
+  const statusDisplay = (data.proxyStatus && (data.proxyStatus.includes('ALIVE') || data.proxyStatus.includes('✅')))
+    ? '✅ ALIVE ✅'
+    : '❌ DEAD ❌';
   let responseMessage = `*IP Address Information:*
 \`\`\`
 -🌐 Proxy Host: ${data.proxyHost}
@@ -2001,12 +2004,12 @@ function formatApiResponse(data) {
 - 📍Country: ${data.isp} ${data.flag}
 - City: ${data.city}
 - ASN: ${data.asn}
-- Proxy Status: ${data.proxyStatus}
+- Proxy Status: ${statusDisplay}
 - Delay: ${data.delay}
 \`\`\`
 `;
 
-  if (data.proxyStatus.includes('✅ ALIVE ✅')) {
+  if (data.proxyStatus && (data.proxyStatus.includes('ALIVE') || data.proxyStatus.includes('✅'))) {
     responseMessage += `*IP yang kamu berikan berstatus proxy ACTIVE kamu bisa membuat akun menggunakan proxy tersebut, Pilihlah protocol mana yang ingin kamu buat :*`;
     return {
       text: responseMessage,
