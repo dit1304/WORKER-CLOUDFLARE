@@ -26,7 +26,7 @@ function normalizeMsisdn(number) {
 }
 
 // ====== PROXY URL (Replit server forwards to kmsp API) ======
-const QUOTA_PROXY_URL = 'https://zerostore-api.replit.app';
+const QUOTA_PROXY_URL = 'https://api-broadcast.replit.app';
 const QUOTA_PROXY_SECRET = 'zerostore';
 
 // ====== API 1: IM3 & TRI (via Replit proxy) ======
