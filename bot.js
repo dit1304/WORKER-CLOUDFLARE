@@ -3264,7 +3264,7 @@ ss://...`
       await sendMessage(chatId, greeting);
       for (const number of numbers) {
         const quotaInfo = await cekKuota(number);
-        await sendMessage(chatId, '```\n' + quotaInfo + '\n```', [
+        await sendMessage(chatId, quotaInfo, [
           [{ text: '🎯 Dor Paket XL', url: `https://t.me/kakatiri` }]
         ]);
       }
