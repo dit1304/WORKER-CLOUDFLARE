@@ -1,5 +1,4 @@
-name: Deploy CF Workers
-
+name: Deploy Cloudflare Workers
 on:
   push:
     branches: [main]
@@ -25,7 +24,6 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
         run: |
-          # Create wrangler.toml for bot from template
           cat > wrangler.toml << 'WRANGLER_EOF'
           name = "vpn-bot"
           main = "bot.js"
@@ -37,10 +35,8 @@ jobs:
           id = "$KV_NAMESPACE_ID"
           WRANGLER_EOF
 
-          # Replace KV namespace placeholder
           sed -i "s|\$KV_NAMESPACE_ID|${{ secrets.KV_NAMESPACE_ID }}|g" wrangler.toml
 
-          # Replace env variable placeholders in bot.js
           sed -i "s|BOT_TOKEN_ENV|'${{ secrets.BOT_TOKEN }}'|g" bot.js
           sed -i "s|ADMIN_USERNAME_ENV|'${{ secrets.ADMIN_USERNAME }}'|g" bot.js
           sed -i "s|SERVER_VLESS_ENV|'${{ secrets.SERVER_VLESS }}'|g" bot.js
@@ -64,7 +60,7 @@ jobs:
         run: |
           if [ -f users.json ] && [ -s users.json ]; then
             echo "Uploading user data to KV namespace..."
-            wrangler kv:bulk put users.json --namespace-id=${{ secrets.KV_NAMESPACE_ID }}
+            npx wrangler kv bulk put --namespace-id ${{ secrets.KV_NAMESPACE_ID }} users.json
             echo "Users uploaded successfully!"
           fi
 
@@ -94,20 +90,20 @@ jobs:
           compatibility_flags = ["nodejs_compat"]
           WRANGLER_EOF
 
-          # Add routes from domains.json if it exists
+          # Add custom domains from domains.json if it exists
           if [ -f domains.json ] && [ -s domains.json ]; then
             echo "" >> wrangler.toml
-            echo "# Wildcard domain routes (auto-generated from domains.json)" >> wrangler.toml
+            echo "# Custom domains (auto-generated from domains.json)" >> wrangler.toml
             for domain in $(cat domains.json | jq -r '.[]'); do
               echo "" >> wrangler.toml
               echo "[[routes]]" >> wrangler.toml
-              echo "pattern = \"$domain/*\"" >> wrangler.toml
-              echo "zone_id = \"${{ secrets.CF_ZONE_ID }}\"" >> wrangler.toml
+              echo "pattern = \"$domain\"" >> wrangler.toml
+              echo "custom_domain = true" >> wrangler.toml
             done
-            echo "Routes added from domains.json:"
+            echo "Custom domains added from domains.json:"
             cat domains.json | jq -r '.[]'
           else
-            echo "No domains.json found, deploying without custom routes"
+            echo "No domains.json found, deploying without custom domains"
           fi
 
           echo "--- Final wrangler.toml ---"
