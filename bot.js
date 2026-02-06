@@ -50,56 +50,40 @@ async function cekKuotaIndosatTri(number) {
 
     const data = await resp.json();
     if (!data.status || !data.data) {
-      return 'Gagal mengambil data untuk ' + number + '.
-Pesan: ' + (data.message || 'Unknown');
+      return 'Gagal mengambil data untuk ' + number + '.\nPesan: ' + (data.message || 'Unknown');
     }
 
     const cust = data.data.customer;
     const pkgs = data.data.packages || [];
 
     let out = '';
-    out += '*Info Pelanggan:*
-';
-    out += 'Nomor: ' + cust.msisdn + '
-';
-    out += 'Status: ' + cust.status + '
-';
-    out += 'Kelas Layanan: ' + (cust.serviceClass || '-') + '
-';
+    out += '*Info Pelanggan:*\n';
+    out += 'Nomor: ' + cust.msisdn + '\n';
+    out += 'Status: ' + cust.status + '\n';
+    out += 'Kelas Layanan: ' + (cust.serviceClass || '-') + '\n';
 
     if (cust.balance) {
-      out += 'Pulsa: ' + (cust.balance.text || 'Rp' + cust.balance.amount) + '
-';
+      out += 'Pulsa: ' + (cust.balance.text || 'Rp' + cust.balance.amount) + '\n';
     }
 
-    out += '
-*Paket Aktif:*
-';
+    out += '\n*Paket Aktif:*\n';
     if (!pkgs.length) {
-      out += 'Tidak ada paket aktif.
-';
+      out += 'Tidak ada paket aktif.\n';
     } else {
       for (const pkg of pkgs) {
-        out += 'Paket: ' + (pkg.title || '(Tidak diketahui)') + '
-';
-        out += 'Aktif: ' + (pkg.activated_at || '-') + ' s/d ' + (pkg.ended_at || '-') + '
-';
+        out += 'Paket: ' + (pkg.title || '(Tidak diketahui)') + '\n';
+        out += 'Aktif: ' + (pkg.activated_at || '-') + ' s/d ' + (pkg.ended_at || '-') + '\n';
         const items = pkg.items || [];
         for (const item of items) {
-          out += '  Benefit: ' + (item.name || '-') + '
-';
-          out += '  Sisa: ' + (item.remaining_text || '-') + '
-';
-          out += '  Expired: ' + (item.expired_at || '-') + '
-';
+          out += '  Benefit: ' + (item.name || '-') + '\n';
+          out += '  Sisa: ' + (item.remaining_text || '-') + '\n';
+          out += '  Expired: ' + (item.expired_at || '-') + '\n';
         }
-        out += '------------------------------
-';
+        out += '------------------------------\n';
       }
     }
 
-    out += '
-Panduan penggunaan: /start';
+    out += '\nPanduan penggunaan: /start';
     return out;
 
   } catch (err) {
@@ -143,44 +127,31 @@ async function cekKuotaXLAxis(number) {
     const rMsisdn = data?.data?.msisdn || msisdn;
 
     if (!sp) {
-      return 'Gagal mengambil data untuk ' + number + '.
-Respon: ' + raw.slice(0, 500);
+      return 'Gagal mengambil data untuk ' + number + '.\nRespon: ' + raw.slice(0, 500);
     }
 
     let out = '';
-    out += '*Info Pelanggan:*
-';
-    out += 'Nomor: ' + rMsisdn + '
-';
-    out += 'Tipe Kartu: ' + (sp.prefix?.value ?? '-') + '
-';
-    out += 'Status 4G: ' + (sp.status_4g?.value ?? '-') + '
-';
-    out += 'Dukcapil: ' + (sp.dukcapil?.value ?? '-') + '
-';
+    out += '*Info Pelanggan:*\n';
+    out += 'Nomor: ' + rMsisdn + '\n';
+    out += 'Tipe Kartu: ' + (sp.prefix?.value ?? '-') + '\n';
+    out += 'Status 4G: ' + (sp.status_4g?.value ?? '-') + '\n';
+    out += 'Dukcapil: ' + (sp.dukcapil?.value ?? '-') + '\n';
 
     if (sp.status_volte?.success && typeof sp.status_volte.value === 'object') {
       const v = sp.status_volte.value;
       const ya = 'Ya', tdk = 'Tidak';
-      out += 'VoLTE: Device ' + (v.device ? ya : tdk) + ' | Area ' + (v.area ? ya : tdk) + ' | SIM ' + (v.simcard ? ya : tdk) + '
-';
+      out += 'VoLTE: Device ' + (v.device ? ya : tdk) + ' | Area ' + (v.area ? ya : tdk) + ' | SIM ' + (v.simcard ? ya : tdk) + '\n';
     }
 
-    out += 'Umur Kartu: ' + (sp.active_card?.value ?? '-') + '
-';
-    out += 'Masa Aktif: ' + (sp.active_period?.value ?? '-') + '
-';
-    out += 'Tenggang: ' + (sp.grace_period?.value ?? '-') + '
-';
+    out += 'Umur Kartu: ' + (sp.active_card?.value ?? '-') + '\n';
+    out += 'Masa Aktif: ' + (sp.active_period?.value ?? '-') + '\n';
+    out += 'Tenggang: ' + (sp.grace_period?.value ?? '-') + '\n';
 
-    out += '
-*Paket Aktif:*
-';
+    out += '\n*Paket Aktif:*\n';
     const quotaList = Array.isArray(sp.quotas?.value) ? sp.quotas.value : [];
 
     if (!quotaList.length) {
-      out += 'Tidak ada paket aktif.
-';
+      out += 'Tidak ada paket aktif.\n';
     } else {
       for (const group of quotaList) {
         const items = Array.isArray(group) ? group : [group];
@@ -188,32 +159,25 @@ Respon: ' + raw.slice(0, 500);
           const pkg = item.packages || {};
           const benefits = item.benefits || [];
 
-          out += 'Paket: ' + (pkg.name || '(Tidak diketahui)') + '
-';
+          out += 'Paket: ' + (pkg.name || '(Tidak diketahui)') + '\n';
           if (pkg.expDate) {
             const exp = new Date(pkg.expDate);
-            out += 'Expired: ' + exp.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) + ' ' + exp.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + '
-';
+            out += 'Expired: ' + exp.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) + ' ' + exp.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + '\n';
           }
           for (const b of benefits) {
-            out += '  Benefit: ' + (b.bname || '-') + ' (' + (b.type || '-') + ')
-';
-            out += '  Kuota: ' + (b.quota || '-') + ' | Sisa: ' + (b.remaining || '-') + '
-';
+            out += '  Benefit: ' + (b.bname || '-') + ' (' + (b.type || '-') + ')\n';
+            out += '  Kuota: ' + (b.quota || '-') + ' | Sisa: ' + (b.remaining || '-') + '\n';
           }
-          out += '------------------------------
-';
+          out += '------------------------------\n';
         }
       }
     }
 
     if (data?.data?.hasil && /batas maksimal pengecekan/i.test(String(data.data.hasil))) {
-      out += '
-*Batas pengecekan tercapai.* Silakan coba lagi nanti.';
+      out += '\n*Batas pengecekan tercapai.* Silakan coba lagi nanti.';
     }
 
-    out += '
-Panduan penggunaan: /start';
+    out += '\nPanduan penggunaan: /start';
     return out;
 
   } catch (err) {
@@ -228,38 +192,27 @@ async function cekKuota(number) {
   return '*Fitur Cek Kuota Sedang Gangguan*\n\nMohon maaf, layanan cek kuota sedang dalam perbaikan.\nSilakan coba lagi nanti.\n\nPanduan penggunaan: /start';
 }
 
-// Function to handle /kuota command
 async function handleKuotaCommand(chatId, username) {
-  const message = '*Panduan Cek Kuota*
-
-' +
-    '*Operator yang Didukung:*
-' +
-    'IM3, Tri (3), XL, Axis
-
-' +
-    '*Cara Menggunakan:*
-' +
-    '1. Kirim nomor telepon Anda
-' +
-    '2. Format: 081234567890
-' +
-    '3. Bisa cek multiple nomor:
-' +
-    '   Dengan spasi: 081234567890 082345678901
-' +
-    '   Dengan koma: 081234567890,082345678901
-
-' +
-    '*Informasi yang Ditampilkan:*
-' +
-    'Status Kartu, Masa Aktif, Kuota Tersisa, Paket Aktif, Detail Benefit
-
-' +
+  const message = '*Panduan Cek Kuota*\n\n' +
+    '*Operator yang Didukung:*\n' +
+    'IM3, Tri (3), XL, Axis\n\n' +
+    '*Cara Menggunakan:*\n' +
+    '1. Kirim nomor telepon Anda\n' +
+    '2. Format: 081234567890\n' +
+    '3. Bisa cek multiple nomor:\n' +
+    '   Dengan spasi: 081234567890 082345678901\n' +
+    '   Dengan koma: 081234567890,082345678901\n\n' +
+    '*Informasi yang Ditampilkan:*\n' +
+    'Status Kartu, Masa Aktif, Kuota Tersisa, Paket Aktif, Detail Benefit\n\n' +
     'Update Status: Real-time';
 
   await sendMessage(chatId, message);
 }
+
+async function syncUsersToGitHub(users) {
+  try {
+    if (typeof GITHUB_TOKEN_ENV === 'undefined' || !GITHUB_TOKEN_ENV ||
+        typeof GITHUB_REPO_ENV === 'undefined' || !GITHUB_REPO_ENV) {
       console.log('GitHub sync disabled: GITHUB_TOKEN or GITHUB_REPO not set');
       return;
     }
