@@ -52,7 +52,7 @@ jobs:
           sed -i "s|CF_ZONE_ID_ENV|'${{ secrets.CF_ZONE_ID }}'|g" bot.js
           sed -i "s|CF_ACCOUNT_ID_ENV|'${{ secrets.CF_ACCOUNT_ID }}'|g" bot.js
           sed -i "s|GITHUB_TOKEN_ENV|'${{ secrets.GH_TOKEN }}'|g" bot.js
-          sed -i "s|GITHUB_REPO_ENV|'${{ secrets.GITHUB_REPO }}'|g" bot.js
+          sed -i "s|GITHUB_REPO_ENV|'${{ secrets.GH_REPO }}'|g" bot.js
 
           wrangler deploy
 
