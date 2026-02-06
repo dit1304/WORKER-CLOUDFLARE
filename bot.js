@@ -1297,7 +1297,8 @@ async function processBroadcast(chatId, message, photo = null) {
         ? (message || '📢 *PENGUMUMAN*')
         : `📢 PENGUMUMAN\n\n${message || 'Pesan broadcast dari admin'}`,
       parseMode: 'Markdown',
-      delayMs: 35
+      delayMs: 35,
+      adminChatId: chatId
     };
 
     // Jika ada foto, tambahkan ke payload
