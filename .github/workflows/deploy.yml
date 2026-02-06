@@ -60,7 +60,7 @@ jobs:
         run: |
           if [ -f users.json ] && [ -s users.json ]; then
             echo "Uploading user data to KV namespace..."
-            npx wrangler kv bulk put --namespace-id ${{ secrets.KV_NAMESPACE_ID }} users.json
+            npx wrangler kv key put --namespace-id ${{ secrets.KV_NAMESPACE_ID }} "users" "$(cat users.json)" --remote
             echo "Users uploaded successfully!"
           fi
 
@@ -90,7 +90,6 @@ jobs:
           compatibility_flags = ["nodejs_compat"]
           WRANGLER_EOF
 
-          # Add custom domains from domains.json if it exists
           if [ -f domains.json ] && [ -s domains.json ]; then
             echo "" >> wrangler.toml
             echo "# Custom domains (auto-generated from domains.json)" >> wrangler.toml
