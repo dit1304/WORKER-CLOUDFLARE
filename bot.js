@@ -1864,121 +1864,212 @@ function isValidIP(ip) {
   return regex.test(ip);
 }
 
-// CEK KUOTA – khusus schema data_sp + hasil (seperti contohmu)
-async function cekKuota(number) {
-  const baseURL = 'http://jav.zerostore.org:9000'; // ganti ke https kalau sudah siap
-  const url = `${baseURL}/cek_kuota?msisdn=${encodeURIComponent(number)}`;
+// ====== DETEKSI OPERATOR ======
+function detectCarrier(msisdn) {
+  // Normalisasi ke format 08xx
+  let num = msisdn.replace(/\D/g, '');
+  if (num.startsWith('62')) num = '0' + num.slice(2);
+  if (!num.startsWith('0')) num = '0' + num;
+
+  const prefix4 = num.slice(0, 4);
+
+  const indosat = ['0814','0815','0816','0855','0856','0857','0858','0885','0886','0887','0888','0889'];
+  const tri     = ['0895','0896','0897','0898','0899'];
+  const xl      = ['0817','0818','0819','0859','0877','0878'];
+  const axis    = ['0831','0832','0833','0838'];
+
+  if (indosat.includes(prefix4)) return 'INDOSAT';
+  if (tri.includes(prefix4))     return 'TRI';
+  if (xl.includes(prefix4))      return 'XL';
+  if (axis.includes(prefix4))    return 'AXIS';
+  return null;
+}
+
+// Normalisasi nomor ke format 628xx
+function normalizeMsisdn(number) {
+  let num = number.replace(/\D/g, '');
+  if (num.startsWith('0')) num = '62' + num.slice(1);
+  if (!num.startsWith('62')) num = '62' + num;
+  return num;
+}
+
+// ====== API 1: IM3 & TRI ======
+async function cekKuotaIndosatTri(number) {
+  const msisdn = normalizeMsisdn(number);
+  const url = 'https://misc-api.kmsp-store.com/simple-api/quota/v1/check';
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
 
   try {
-    // timeout 10s biar worker nggak ngegantung
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 10000);
-
     const resp = await fetch(url, {
-      method: 'GET',
+      method: 'POST',
       signal: controller.signal,
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Cloudflare Worker)',
-        'Accept': 'application/json'
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36'
       },
-      redirect: 'follow'
+      body: JSON.stringify({ msisdn })
     });
     clearTimeout(timer);
 
     if (!resp.ok) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
 
-    // server kadang kirim text → parse aman
-    const raw = await resp.text();
-    let data;
-    try { data = JSON.parse(raw); } catch { data = { raw }; }
-
-    const sp = data?.data?.data_sp;
-    const msisdn = data?.data?.msisdn || number;
-
-    if (!sp) {
-      // fallback kalau struktur nggak sesuai harapan
-      return `❌ Gagal mengambil data untuk ${number}.\n🔍 Respon: ${raw.slice(0, 800)}`;
+    const data = await resp.json();
+    if (!data.status || !data.data) {
+      return `Gagal mengambil data untuk ${number}.\nPesan: ${data.message || 'Unknown'}`;
     }
 
-    // ====== HEADER INFO PELANGGAN ======
+    const cust = data.data.customer;
+    const pkgs = data.data.packages || [];
+
     let out = '';
-    out += `📱 *Info Pelanggan:*\n`;
-    out += `🔢 Nomor: ${msisdn}\n`;
-    out += `💳 Tipe Kartu: ${sp.prefix?.value ?? '-'}\n`;
-    out += `📶 Status 4G: ${sp.status_4g?.value ?? '-'}\n`;
-    out += `📋 Dukcapil: ${sp.dukcapil?.value ?? '-'}\n`;
+    out += `*Info Pelanggan:*\n`;
+    out += `Nomor: ${cust.msisdn}\n`;
+    out += `Status: ${cust.status}\n`;
+    out += `Kelas Layanan: ${cust.serviceClass || '-'}\n`;
 
-    // VoLTE (kalau ada di status_volte)
-    if (sp.status_volte?.success && typeof sp.status_volte.value === 'object') {
-      const v = sp.status_volte.value;
-      const yes = '✅', no = '❌';
-      out += `📶 VoLTE: Device ${v.device ? yes : no} • Area ${v.area ? yes : no} • SIM ${v.simcard ? yes : no}\n`;
+    if (cust.balance) {
+      out += `Pulsa: ${cust.balance.text || 'Rp' + cust.balance.amount}\n`;
     }
 
-    out += `⌛ Umur Kartu: ${sp.active_card?.value ?? '-'}\n`;
-    out += `🗓 Masa Aktif: ${sp.active_period?.value ?? '-'}\n`;
-    out += `⏳ Tenggang: ${sp.grace_period?.value ?? '-'}\n`;
-
-    // ====== PAKET AKTIF ======
-    out += `\n📦 *Info Paket Aktif:*\n`;
-    const daftar = Array.isArray(sp.quotas?.value) ? sp.quotas.value : [];
-    if (!daftar.length) {
+    out += `\n*Paket Aktif:*\n`;
+    if (!pkgs.length) {
       out += `Tidak ada paket aktif.\n`;
     } else {
-      for (const p of daftar) {
-        const nama = (p?.name || '').trim() || '(Tidak diketahui)';
-        const exp  = (p?.date_end || '').trim() || '(Tidak diketahui)';
-        const det  = Array.isArray(p?.detail_quota) ? p.detail_quota : [];
-
-        // skip benar-benar kosong
-        const punyaIsi = det.some(d => d && (d.name || d.type || d.total_text || d.remaining_text));
-        if (!nama && !punyaIsi) continue;
-
-        out += `⚡️ Paket: ${nama}\n`;
-        out += `📅 Expired: ${exp}\n`;
-        for (const d of det) {
-          if (!d) continue;
-          out += `🎁 Benefit: ${d.name ?? '-'}\n`;
-          out += `📊 Tipe: ${d.type ?? '-'}\n`;
-          out += `💡 Kuota: ${d.total_text ?? '-'}\n`;
-          out += `🌲 Sisa: ${d.remaining_text ?? '-'}\n`;
+      for (const pkg of pkgs) {
+        out += `Paket: ${pkg.title || '(Tidak diketahui)'}\n`;
+        out += `Aktif: ${pkg.activated_at || '-'} s/d ${pkg.ended_at || '-'}\n`;
+        const items = pkg.items || [];
+        for (const item of items) {
+          out += `  Benefit: ${item.name || '-'}\n`;
+          out += `  Sisa: ${item.remaining_text || '-'}\n`;
+          out += `  Expired: ${item.expired_at || '-'}\n`;
         }
         out += `------------------------------\n`;
       }
     }
 
-    // ====== CATATAN (RINGKAS) dari field HTML "hasil" ======
-    if (data?.data?.hasil) {
-      // bersihkan HTML → text
-      let h = String(data.data.hasil)
-        .replace(/<br\s*\/?>/gi, '\n')
-        .replace(/<[^>]+>/g, '')
-        .trim();
-
-      // deteksi pesan rate-limit
-      const rateMsg = /batas maksimal pengecekan/i.test(h);
-
-      // ambil baris kuota/expiry/pemisah (kalau ada), supaya tidak duplikat header
-      const ringkasLines = h.split('\n')
-        .map(s => s.trim())
-        .filter(s => /^🎁/.test(s) || /^🍂/.test(s) || /^=+$/.test(s));
-
-      const ringkas = ringkasLines.join('\n').trim();
-
-      if (rateMsg) {
-        out += `\n⚠️ *Batas pengecekan tercapai.*\nSilakan coba lagi nanti.`;
-      }
-      if (ringkas) {
-        out += `\n📄 *Catatan (ringkas):*\n${ringkas}`;
-      }
-    }
-
-    out += `\n\n📌 Panduan penggunaan: /start`;
+    out += `\nPanduan penggunaan: /start`;
     return out;
 
   } catch (err) {
-    const reason = err.name === 'AbortError' ? 'Timeout: origin lambat' : err.message;
-    return `❌ Terjadi kesalahan saat cek kuota ${number}: ${reason}`;
+    clearTimeout(timer);
+    const reason = err.name === 'AbortError' ? 'Timeout: server lambat' : err.message;
+    return `Terjadi kesalahan saat cek kuota ${number}: ${reason}`;
+  }
+}
+
+// ====== API 2: XL & AXIS ======
+async function cekKuotaXLAxis(number) {
+  const msisdn = normalizeMsisdn(number);
+  const timestamp = Date.now();
+  const url = `https://apigw.kmsp-store.com/sidompul/v4/cek_kuota?msisdn=${msisdn}&isJSON=true&_=${timestamp}`;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+
+  try {
+    const resp = await fetch(url, {
+      method: 'GET',
+      signal: controller.signal,
+      headers: {
+        'Accept': 'application/json, text/javascript, */*; q=0.01',
+        'Authorization': 'Basic c2RvbXB1bDpkMzFyMjhwNkE=',
+        'X-Api-Key': '65ef29aa-a668-4b68-90ae-20951ef90c55',
+        'X-App-Version': '4.0.0',
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36'
+      }
+    });
+    clearTimeout(timer);
+
+    if (!resp.ok) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
+
+    const raw = await resp.text();
+    let data;
+    try { data = JSON.parse(raw); } catch { data = { raw }; }
+
+    const sp = data?.data?.data_sp;
+    const rMsisdn = data?.data?.msisdn || msisdn;
+
+    if (!sp) {
+      return `Gagal mengambil data untuk ${number}.\nRespon: ${raw.slice(0, 500)}`;
+    }
+
+    let out = '';
+    out += `*Info Pelanggan:*\n`;
+    out += `Nomor: ${rMsisdn}\n`;
+    out += `Tipe Kartu: ${sp.prefix?.value ?? '-'}\n`;
+    out += `Status 4G: ${sp.status_4g?.value ?? '-'}\n`;
+    out += `Dukcapil: ${sp.dukcapil?.value ?? '-'}\n`;
+
+    if (sp.status_volte?.success && typeof sp.status_volte.value === 'object') {
+      const v = sp.status_volte.value;
+      const ya = 'Ya', tdk = 'Tidak';
+      out += `VoLTE: Device ${v.device ? ya : tdk} | Area ${v.area ? ya : tdk} | SIM ${v.simcard ? ya : tdk}\n`;
+    }
+
+    out += `Umur Kartu: ${sp.active_card?.value ?? '-'}\n`;
+    out += `Masa Aktif: ${sp.active_period?.value ?? '-'}\n`;
+    out += `Tenggang: ${sp.grace_period?.value ?? '-'}\n`;
+
+    out += `\n*Paket Aktif:*\n`;
+    const quotaList = Array.isArray(sp.quotas?.value) ? sp.quotas.value : [];
+
+    if (!quotaList.length) {
+      out += `Tidak ada paket aktif.\n`;
+    } else {
+      for (const group of quotaList) {
+        const items = Array.isArray(group) ? group : [group];
+        for (const item of items) {
+          const pkg = item.packages || {};
+          const benefits = item.benefits || [];
+
+          out += `Paket: ${pkg.name || '(Tidak diketahui)'}\n`;
+          if (pkg.expDate) {
+            const exp = new Date(pkg.expDate);
+            out += `Expired: ${exp.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })} ${exp.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}\n`;
+          }
+          for (const b of benefits) {
+            out += `  Benefit: ${b.bname || '-'} (${b.type || '-'})\n`;
+            out += `  Kuota: ${b.quota || '-'} | Sisa: ${b.remaining || '-'}\n`;
+          }
+          out += `------------------------------\n`;
+        }
+      }
+    }
+
+    // Rate limit warning dari field hasil
+    if (data?.data?.hasil && /batas maksimal pengecekan/i.test(String(data.data.hasil))) {
+      out += `\n*Batas pengecekan tercapai.* Silakan coba lagi nanti.`;
+    }
+
+    out += `\nPanduan penggunaan: /start`;
+    return out;
+
+  } catch (err) {
+    clearTimeout(timer);
+    const reason = err.name === 'AbortError' ? 'Timeout: server lambat' : err.message;
+    return `Terjadi kesalahan saat cek kuota ${number}: ${reason}`;
+  }
+}
+
+// ====== FUNGSI UTAMA: AUTO DETECT OPERATOR ======
+async function cekKuota(number) {
+  const carrier = detectCarrier(number);
+
+  if (!carrier) {
+    return `Nomor ${number} tidak dikenali sebagai IM3, Tri, XL, atau Axis.\nPastikan format nomor benar (contoh: 081234567890).`;
+  }
+
+  if (carrier === 'INDOSAT' || carrier === 'TRI') {
+    return await cekKuotaIndosatTri(number);
+  }
+
+  if (carrier === 'XL' || carrier === 'AXIS') {
+    return await cekKuotaXLAxis(number);
   }
 }
 
