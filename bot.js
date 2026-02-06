@@ -1801,28 +1801,6 @@ async function handleBandwidthCommand(chatId) {
 }
 
 // Function to handle /kuota command
-async function handleKuotaCommand(chatId, username) {
-  const message = `👋 *Panduan Cek Kuota*
-
-📱 *Cara Menggunakan:*
-1. Kirim nomor telepon (IM3/Tri/XL/Axis) Anda
-2. Format: \`081234567890\`
-3. Bisa cek multiple nomor:
-   • Dengan spasi: \`081234567890 082345678901\`
-   • Dengan koma: \`081234567890,082345678901\`
-
-ℹ️ *Informasi yang Ditampilkan:*
-• Status Kartu
-• Masa Aktif
-• Kuota Tersisa
-• Paket Aktif
-• Detail Benefit
-
-🔄 *Update Status:* Real-time`;
-
-  await sendMessage(chatId, message);
-}
-
 // Function to handle /proxy command
 // /proxy          -> 20 proxy acak global
 // /proxy US       -> 20 proxy acak untuk US
@@ -2317,22 +2295,6 @@ async function cekKuotaXLAxis(number) {
 }
 
 // ====== FUNGSI UTAMA: AUTO DETECT OPERATOR ======
-async function cekKuota(number) {
-  const carrier = detectCarrier(number);
-
-  if (!carrier) {
-    return `Nomor ${number} tidak dikenali sebagai IM3, Tri, XL, atau Axis.\nPastikan format nomor benar (contoh: 081234567890).`;
-  }
-
-  if (carrier === 'INDOSAT' || carrier === 'TRI') {
-    return await cekKuotaIndosatTri(number);
-  }
-
-  if (carrier === 'XL' || carrier === 'AXIS') {
-    return await cekKuotaXLAxis(number);
-  }
-}
-
 // broadcast
 async function sendBroadcastText(chatId, text) {
   const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
