@@ -33,6 +33,9 @@ jobs:
           [[kv_namespaces]]
           binding = "BOT_USERS"
           id = "$KV_NAMESPACE_ID"
+
+          [triggers]
+          crons = ["*/1 * * * *"]
           WRANGLER_EOF
 
           sed -i "s|\$KV_NAMESPACE_ID|${{ secrets.KV_NAMESPACE_ID }}|g" wrangler.toml

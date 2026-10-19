@@ -1442,12 +1442,12 @@ async function handleBroadcastCommand(chatId, username) {
   await storage.setChatData(chatId, { isBroadcastMode: true });
   
   const users = await storage.getAllUsers();
-  const estimatedTime = Math.ceil(users.length / 15); // More realistic estimate (15 msg/batch)
+  const estimatedTime = Math.ceil(users.length / 25); // 25 msg/batch via cron tiap menit
   
   const message = `📣 *Mode Broadcast Aktif*\n\n` +
     `👥 Total Pengguna: ${users.length}\n` +
     `⏰ Perkiraan waktu: ~${estimatedTime} menit\n` +
-    `🔄 Kecepatan: ~15 pesan/menit\n\n` +
+    `🔄 Kecepatan: ~25 pesan/menit\n\n` +
     `📝 *Cara Penggunaan:*\n` +
     `• Kirim pesan teks untuk broadcast text\n` +
     `• Kirim foto dengan caption untuk broadcast gambar\n` +
@@ -1462,17 +1462,26 @@ async function handleBroadcastCommand(chatId, username) {
 
 // Enhanced broadcast process with real-time progress updates and better notifications
 // =====================================================
-// REPLIT BROADCAST CONFIG - GANTI DENGAN URL DAN SECRET ANDA
+// BROADCAST 100% CLOUDFLARE (tanpa server pihak ketiga)
+// processBroadcast -> antre job di KV -> cron tiap menit
+// (scheduled handler) kirim 25 pesan/batch langsung via API Telegram.
 // =====================================================
-const REPLIT_BROADCAST_URL = 'https://api-broadcast.replit.app/api/broadcast';
-const BROADCAST_SECRET = 'zerostore';
+const BROADCAST_BATCH_SIZE = 25;
 
-// =====================================================
-// FUNGSI BROADCAST VIA REPLIT (SUDAH DIMODIFIKASI)
-// =====================================================
+function makeBroadcastJobId() {
+  return 'bc_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+function broadcastProgressBar(done, total) {
+  if (total <= 0) return '░░░░░░░░░░ 0%';
+  const pct = Math.round((done / total) * 100);
+  const filled = Math.round(pct / 10);
+  return '▓'.repeat(filled) + '░'.repeat(10 - filled) + ' ' + pct + '%';
+}
+
 async function processBroadcast(chatId, message, photo = null) {
   const startTime = Date.now();
-  
+
   try {
     const users = await storage.getAllUsers();
 
@@ -1484,93 +1493,168 @@ async function processBroadcast(chatId, message, photo = null) {
     }
 
     // Filter out admin from broadcast list
-    const userIds = users.filter(userId => userId !== chatId.toString());
-    
+    const userIds = users
+      .map(u => String(u))
+      .filter(uid => uid && uid !== String(chatId));
+
+    if (userIds.length === 0) {
+      await sendMessage(chatId, '❌ Tidak ada pengguna untuk broadcast (selain admin).');
+      await storage.setBroadcastState(chatId, false);
+      await storage.setChatData(chatId, { isBroadcastMode: false });
+      return;
+    }
+
     // Validate photo file_id if provided
     if (photo && !isValidFileId(photo)) {
       await sendMessage(chatId, '⚠️ File ID foto tidak valid. Melanjutkan dengan pesan teks saja.');
       photo = null;
     }
 
-    const mediaType = photo ? '📸 Ya' : '📄 Tidak';
-    const estimatedSeconds = Math.ceil(userIds.length * 35 / 1000);
+    const text = photo
+      ? (message || '📢 *PENGUMUMAN*')
+      : `📢 PENGUMUMAN\n\n${message || 'Pesan broadcast dari admin'}`;
 
-    // Kirim notifikasi awal ke admin
-    await sendMessage(chatId, 
-      `🚀 *BROADCAST DIMULAI*\n\n` +
-      `📊 *Detail:*\n` +
-      `👥 Total Pengguna: ${userIds.length}\n` +
-      `📸 Media: ${mediaType}\n` +
-      `⏰ Perkiraan waktu: ~${estimatedSeconds} detik\n` +
-      `📅 Waktu mulai: ${new Date().toLocaleTimeString('id-ID')}\n\n` +
-      `🔄 *Mengirim ke server Replit...*`
-    );
-
-    // Siapkan payload untuk Replit
-    const broadcastPayload = {
+    const jobId = makeBroadcastJobId();
+    const job = {
+      id: jobId,
+      adminChatId: String(chatId),
       userIds: userIds,
-      message: photo 
-        ? (message || '📢 *PENGUMUMAN*')
-        : `📢 PENGUMUMAN\n\n${message || 'Pesan broadcast dari admin'}`,
-      parseMode: 'Markdown',
-      delayMs: 35,
-      adminChatId: chatId
+      text: text,
+      photo: photo || null,
+      index: 0,
+      total: userIds.length,
+      sent: 0,
+      failed: 0,
+      cancelled: false,
+      statusMsgId: null,
+      createdAt: new Date().toISOString()
     };
 
-    // Jika ada foto, tambahkan ke payload
-    if (photo) {
-      broadcastPayload.photo = photo;
+    // Antre job di KV (1x write; ~20KB untuk 1700 user, jauh di bawah limit 25MB)
+    await BOT_USERS.put('bc_job_' + jobId, JSON.stringify(job), { expirationTtl: 86400 });
+    await BOT_USERS.put('bc_active_' + chatId, jobId, { expirationTtl: 86400 });
+
+    const estMin = Math.ceil(userIds.length / BROADCAST_BATCH_SIZE);
+    const statusRes = await sendMessage(chatId,
+      `🚀 *BROADCAST DIANTRIKAN*\n\n` +
+      `👥 Total target: ${userIds.length} pengguna\n` +
+      `📸 Media: ${photo ? 'Ya' : 'Tidak'}\n` +
+      `⏱ Estimasi: ~${estMin} menit (~${BROADCAST_BATCH_SIZE}/menit)\n\n` +
+      `🔄 *Mengirim langsung dari Cloudflare...*`
+    );
+    const statusMsgId = statusRes && statusRes.result ? statusRes.result.message_id : null;
+    if (statusMsgId) {
+      job.statusMsgId = statusMsgId;
+      await BOT_USERS.put('bc_job_' + jobId, JSON.stringify(job), { expirationTtl: 86400 });
     }
 
-    // Kirim request ke Replit
-    const response = await fetch(REPLIT_BROADCAST_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${BROADCAST_SECRET}`
-      },
-      body: JSON.stringify(broadcastPayload)
-    });
-
-    const result = await response.json();
-
-    if (response.ok) {
-      // Broadcast berhasil dikirim ke Replit
-      await sendMessage(chatId,
-        `✅ *BROADCAST DITERIMA SERVER*\n\n` +
-        `📤 Job broadcast berhasil dikirim ke Replit.\n` +
-        `👥 Total target: ${result.total || userIds.length} pengguna\n` +
-        `⏱ Estimasi: ~${result.estimatedTimeSeconds || estimatedSeconds} detik\n\n` +
-        `📈 *Broadcast sedang diproses di background*\n` +
-        `✨ Mode broadcast dinonaktifkan otomatis\n` +
-        `🔄 Bot kembali ke mode normal\n\n` +
-        `💡 *Catatan:* Hasil broadcast akan dikirim setelah selesai.`
-      );
-    } else {
-      throw new Error(result.error || 'Gagal mengirim ke server Replit');
-    }
+    // Matikan mode input (admin bebas pakai bot lagi),
+    // tapi state job tetap aktif agar /cancel bisa dipakai.
+    await storage.setChatData(chatId, { isBroadcastMode: false });
+    await storage.setBroadcastState(chatId, true, { jobId: jobId });
 
   } catch (error) {
     console.error('Error in processBroadcast:', error);
-    
     const errorTime = Math.round((Date.now() - startTime) / 1000);
-    
-    await sendMessage(chatId, 
-      `❌ *BROADCAST GAGAL*\n\n` +
-      `🚨 Terjadi kesalahan:\n` +
+    await sendMessage(chatId,
+      `❌ *BROADCAST GAGAL DIANTRIKAN*\n\n` +
       `📝 Error: ${error.message}\n` +
-      `⏱ Waktu: ${errorTime} detik\n\n` +
-      `🔧 *Kemungkinan penyebab:*\n` +
-      `• Server Replit tidak aktif\n` +
-      `• BROADCAST_SECRET tidak cocok\n` +
-      `• URL Replit salah\n\n` +
-      `💡 Pastikan server Replit berjalan dan konfigurasi benar.`
+      `⏱ Waktu: ${errorTime} detik\n`
     );
-  } finally {
-    // Reset broadcast state
     await storage.setBroadcastState(chatId, false);
     await storage.setChatData(chatId, { isBroadcastMode: false });
-    await storage.deleteBroadcastProgress(chatId);
+  }
+}
+
+// Dipanggil oleh scheduled handler (cron tiap menit).
+// Kirim 1 batch langsung via API Telegram, tanpa perantara.
+async function processBroadcastBatch() {
+  try {
+    const list = await BOT_USERS.list({ prefix: 'bc_active_' });
+    for (const key of list.keys) {
+      const jobId = await BOT_USERS.get(key.name);
+      if (!jobId) continue;
+      await processOneBroadcastJob(jobId, key.name);
+    }
+  } catch (e) {
+    console.error('processBroadcastBatch error:', e);
+  }
+}
+
+async function processOneBroadcastJob(jobId, activeKey) {
+  const raw = await BOT_USERS.get('bc_job_' + jobId);
+  if (!raw) { await BOT_USERS.delete(activeKey); return; }
+  const job = JSON.parse(raw);
+  const adminChatId = job.adminChatId;
+
+  const finishJob = async () => {
+    await BOT_USERS.delete('bc_job_' + jobId);
+    await BOT_USERS.delete(activeKey);
+    await storage.setBroadcastState(adminChatId, false);
+    await storage.deleteBroadcastProgress(adminChatId);
+  };
+
+  if (job.cancelled) {
+    await sendMessage(adminChatId,
+      `🛑 *BROADCAST DIBATALKAN*\n\n` +
+      `✅ Terkirim: *${job.sent}*\n` +
+      `❌ Gagal: *${job.failed}*\n` +
+      `📊 Total: *${job.total}* pengguna`
+    );
+    await finishJob();
+    return;
+  }
+
+  const batch = job.userIds.slice(job.index, job.index + BROADCAST_BATCH_SIZE);
+  if (batch.length === 0) {
+    await sendMessage(adminChatId,
+      `✅ *BROADCAST SELESAI*\n\n${broadcastProgressBar(job.total, job.total)}\n\n` +
+      `✅ Terkirim: *${job.sent}*\n` +
+      `❌ Gagal: *${job.failed}*\n` +
+      `📊 Total: *${job.total}* pengguna`
+    );
+    await finishJob();
+    return;
+  }
+
+  for (const uid of batch) {
+    try {
+      if (job.photo) {
+        await sendPhoto(uid, job.photo, job.text);
+      } else {
+        await sendMessage(uid, job.text);
+      }
+      job.sent++;
+    } catch (e) {
+      job.failed++;
+      console.error(`broadcast send failed for ${uid}:`, e && e.message);
+    }
+    job.index++;
+  }
+
+  // Simpan progress (1x KV write per batch)
+  await BOT_USERS.put('bc_job_' + jobId, JSON.stringify(job), { expirationTtl: 86400 });
+
+  // Update status ke admin
+  if (job.statusMsgId) {
+    const done = job.sent + job.failed;
+    const txt = `🔄 *BROADCAST BERJALAN*\n\n${broadcastProgressBar(done, job.total)}\n\n` +
+      `⏳ Proses: *${done}*/*${job.total}*\n` +
+      `✅ Berhasil: *${job.sent}*\n` +
+      `❌ Gagal: *${job.failed}*\n\n` +
+      `_Batch berikutnya ~1 menit lagi._`;
+    try {
+      await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: adminChatId,
+          message_id: job.statusMsgId,
+          text: txt,
+          parse_mode: 'Markdown'
+        })
+      });
+    } catch (e) { /* abaikan; status message mungkin dihapus admin */ }
   }
 }
 
@@ -1585,27 +1669,43 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-// Cancel command - simplified since broadcast runs on Replit
+// Cancel: batalkan mode input broadcast dan/atau job broadcast yang sedang berjalan
 async function handleCancelCommand(chatId) {
   const broadcastState = await storage.getBroadcastState(chatId);
-  
-  if (!broadcastState?.active) {
+  const chatData = await storage.getChatData(chatId);
+  const activeJobId = await BOT_USERS.get('bc_active_' + chatId);
+
+  let msg;
+  if (activeJobId) {
+    // Tandai job dibatalkan; scheduled handler akan berhenti di batch berikutnya
+    try {
+      const raw = await BOT_USERS.get('bc_job_' + activeJobId);
+      if (raw) {
+        const job = JSON.parse(raw);
+        job.cancelled = true;
+        await BOT_USERS.put('bc_job_' + activeJobId, JSON.stringify(job), { expirationTtl: 3600 });
+      }
+    } catch (e) { console.error('cancel job error:', e); }
+    // JANGAN hapus bc_active_ di sini: biarkan scheduled handler yang menemukan
+    // job dibatalkan, kirim ringkasan, lalu bersihkan semuanya.
+    msg = `🛑 *BROADCAST DIBATALKAN*
+
+✅ Pengiriman dihentikan
+🔄 Bot kembali ke mode normal`;
+  } else if (broadcastState?.active || chatData?.isBroadcastMode) {
+    msg = `🛑 *MODE BROADCAST DIBATALKAN*
+
+✅ Mode broadcast dinonaktifkan
+🔄 Bot kembali ke mode normal`;
+  } else {
     await sendMessage(chatId, '🔄 Bot dalam mode normal. Tidak ada broadcast yang sedang berjalan.');
     return;
   }
-  
-  // Clean up broadcast state
+
   await storage.setBroadcastState(chatId, false);
   await storage.setChatData(chatId, { isBroadcastMode: false });
   await storage.deleteBroadcastProgress(chatId);
-  
-  await sendMessage(chatId, 
-    `🛑 *MODE BROADCAST DIBATALKAN*\n\n` +
-    `✅ Mode broadcast dinonaktifkan\n` +
-    `🔄 Bot kembali ke mode normal\n\n` +
-    `⚠️ *Catatan:* Jika broadcast sudah dikirim ke Replit,\n` +
-    `proses akan tetap berjalan di server.`
-  );
+  await sendMessage(chatId, msg);
 }
 
 
@@ -2694,36 +2794,41 @@ async function handleRequest(request, event) {
   // 3) Enhanced broadcast mode detection with better state management
   const broadcastState = await storage.getBroadcastState(chatId);
   const chatData = await storage.getChatData(chatId);
-  
-  if ((broadcastState?.active) || chatData?.isBroadcastMode) {
-    if (text === '/cancel') {
-      await handleCancelCommand(chatId);
+
+  const inInputMode = !!chatData?.isBroadcastMode;
+  const jobRunning = !!broadcastState?.active && !inInputMode;
+
+  // /cancel berlaku saat mode input aktif ATAU ada job broadcast berjalan
+  if (text === '/cancel' && (inInputMode || jobRunning)) {
+    await handleCancelCommand(chatId);
+    return new Response('OK', { status: 200 });
+  }
+
+  if (inInputMode) {
+    // Enhanced photo handling for broadcast
+    let photoId = null;
+    if (msg.photo && Array.isArray(msg.photo) && msg.photo.length > 0) {
+      // Get the largest photo size for better quality
+      photoId = msg.photo[msg.photo.length - 1].file_id;
+      console.log(`Broadcast photo detected: ${photoId}`);
+    } else if (msg.document && msg.document.mime_type?.startsWith('image/')) {
+      // Handle document images
+      photoId = msg.document.file_id;
+      console.log(`Broadcast document image detected: ${photoId}`);
+    }
+    // Jalankan broadcast di background agar webhook cepat balas OK
+    if (event && typeof event.waitUntil === 'function') {
+      event.waitUntil((async () => {
+        try {
+          await processBroadcast(chatId, text, photoId);
+        } catch (err) {
+          console.error('Background broadcast failed:', err);
+        }
+      })());
     } else {
-      // Enhanced photo handling for broadcast
-      let photoId = null;
-      if (msg.photo && Array.isArray(msg.photo) && msg.photo.length > 0) {
-        // Get the largest photo size for better quality
-        photoId = msg.photo[msg.photo.length - 1].file_id;
-        console.log(`Broadcast photo detected: ${photoId}`);
-      } else if (msg.document && msg.document.mime_type?.startsWith('image/')) {
-        // Handle document images
-        photoId = msg.document.file_id;
-        console.log(`Broadcast document image detected: ${photoId}`);
-      }
-      // Jalankan broadcast di background agar webhook cepat balas OK
-      if (event && typeof event.waitUntil === 'function') {
-        event.waitUntil((async () => {
-          try {
-            await processBroadcast(chatId, text, photoId);
-          } catch (err) {
-            console.error('Background broadcast failed:', err);
-          }
-        })());
-      } else {
-        // Fallback jika event tidak tersedia (mis. testing)
-        await processBroadcast(chatId, text, photoId);
-      }
-}
+      // Fallback jika event tidak tersedia (mis. testing)
+      await processBroadcast(chatId, text, photoId);
+    }
     return new Response('OK', { status: 200 });
   }
 
@@ -3010,4 +3115,12 @@ ss://...`
 // Add event listener for fetch events
 addEventListener('fetch', event => {
   event.respondWith(handleRequest(event.request, event));
+});
+
+// Cron trigger: proses antrian broadcast batch demi batch (25/menit).
+// Dipasang via wrangler.toml: [triggers] crons = ["*/1 * * * *"]
+addEventListener('scheduled', event => {
+  event.waitUntil(processBroadcastBatch().catch(err => {
+    console.error('scheduled broadcast batch error:', err);
+  }));
 });
