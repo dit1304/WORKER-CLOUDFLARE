@@ -1467,6 +1467,8 @@ async function handleBroadcastCommand(chatId, username) {
 // (scheduled handler) kirim 25 pesan/batch langsung via API Telegram.
 // =====================================================
 const BROADCAST_BATCH_SIZE = 25;
+const BROADCAST_SEND_DELAY_MS = 1200; // jeda antar pesan biar tak dianggap spam
+const BROADCAST_LOCK_TTL = 180; // detik; cegah 2 cron jalan bersamaan
 
 function makeBroadcastJobId() {
   return 'bc_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -1605,6 +1607,25 @@ async function processOneBroadcastJob(jobId, activeKey) {
     return;
   }
 
+  // Kena limit Telegram (429) sebelumnya -> tunggu sampai waktunya tiba
+  if (job.pausedUntil && Date.now() < job.pausedUntil) {
+    return;
+  }
+
+  // Kunci anti-overlap: lewati jika batch sebelumnya masih berjalan
+  const lockKey = 'bc_lock_' + jobId;
+  if (await BOT_USERS.get(lockKey)) return;
+  await BOT_USERS.put(lockKey, '1', { expirationTtl: BROADCAST_LOCK_TTL });
+  try {
+    await processOneBroadcastBatch(jobId, activeKey, job, adminChatId, finishJob);
+  } finally {
+    await BOT_USERS.delete(lockKey);
+  }
+  return;
+}
+
+async function processOneBroadcastBatch(jobId, activeKey, job, adminChatId, finishJob) {
+
   const batch = job.userIds.slice(job.index, job.index + BROADCAST_BATCH_SIZE);
   if (batch.length === 0) {
     await sendMessage(adminChatId,
@@ -1617,6 +1638,7 @@ async function processOneBroadcastJob(jobId, activeKey) {
     return;
   }
 
+  let hitLimit = false;
   for (const uid of batch) {
     try {
       if (job.photo) {
@@ -1625,11 +1647,21 @@ async function processOneBroadcastJob(jobId, activeKey) {
         await sendMessage(uid, job.text);
       }
       job.sent++;
+      job.index++;
     } catch (e) {
+      if (e && e.status === 429) {
+        // Kena limit Telegram: jeda sesuai retry_after, user ini TIDAK hangus
+        const waitSec = (e.retry_after && Number(e.retry_after)) || 60;
+        job.pausedUntil = Date.now() + waitSec * 1000;
+        hitLimit = true;
+        console.error(`broadcast 429 for ${uid}, pausing ${waitSec}s`);
+        break;
+      }
       job.failed++;
+      job.index++;
       console.error(`broadcast send failed for ${uid}:`, e && e.message);
     }
-    job.index++;
+    await sleep(BROADCAST_SEND_DELAY_MS);
   }
 
   // Simpan progress (1x KV write per batch)
@@ -1638,11 +1670,21 @@ async function processOneBroadcastJob(jobId, activeKey) {
   // Update status ke admin
   if (job.statusMsgId) {
     const done = job.sent + job.failed;
-    const txt = `🔄 *BROADCAST BERJALAN*\n\n${broadcastProgressBar(done, job.total)}\n\n` +
-      `⏳ Proses: *${done}*/*${job.total}*\n` +
-      `✅ Berhasil: *${job.sent}*\n` +
-      `❌ Gagal: *${job.failed}*\n\n` +
-      `_Batch berikutnya ~1 menit lagi._`;
+    let txt;
+    if (hitLimit) {
+      const waitMin = Math.max(1, Math.ceil((job.pausedUntil - Date.now()) / 60000));
+      txt = `⏸️ *BROADCAST JEDA (LIMIT TELEGRAM)*\n\n${broadcastProgressBar(done, job.total)}\n\n` +
+        `⏳ Proses: *${done}*/*${job.total}*\n` +
+        `✅ Berhasil: *${job.sent}*\n` +
+        `❌ Gagal: *${job.failed}*\n\n` +
+        `_Kena limit Telegram, lanjut otomatis ~${waitMin} menit lagi._`;
+    } else {
+      txt = `🔄 *BROADCAST BERJALAN*\n\n${broadcastProgressBar(done, job.total)}\n\n` +
+        `⏳ Proses: *${done}*/*${job.total}*\n` +
+        `✅ Berhasil: *${job.sent}*\n` +
+        `❌ Gagal: *${job.failed}*\n\n` +
+        `_Batch berikutnya ~1 menit lagi._`;
+    }
     try {
       await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`, {
         method: 'POST',
