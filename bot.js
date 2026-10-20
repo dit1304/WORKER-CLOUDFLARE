@@ -1649,7 +1649,8 @@ async function processOneBroadcastBatch(jobId, activeKey, job, adminChatId, fini
       job.sent++;
       job.index++;
     } catch (e) {
-      if (e && e.status === 429) {
+      const isFloodLimit = e && (e.status === 429 || e.error_code === 429 || e.retry_after);
+      if (isFloodLimit) {
         // Kena limit Telegram: jeda sesuai retry_after, user ini TIDAK hangus
         const waitSec = (e.retry_after && Number(e.retry_after)) || 60;
         job.pausedUntil = Date.now() + waitSec * 1000;
@@ -2652,8 +2653,9 @@ async function sendMessage(chatId, response, inlineKeyboard = null) {
     const desc = body.description || `HTTP ${res.status}`;
     const err = new Error(desc);
     err.status = res.status;
+    err.error_code = body.error_code;
     err.retry_after = body.parameters?.retry_after;
-    
+
     // Log error for debugging
     console.error(`sendMessage error for chat ${chatId}: ${desc}`);
     throw err;
@@ -2690,8 +2692,9 @@ async function sendPhoto(chatId, fileIdOrUrl, caption = '', replyMarkup = undefi
     const desc = body.description || `HTTP ${res.status}`;
     const err = new Error(desc);
     err.status = res.status;
+    err.error_code = body?.error_code;
     err.retry_after = body?.parameters?.retry_after;
-    
+
     console.error(`sendPhoto error for chat ${chatId}: ${desc}`);
     
     // If photo sending fails, try to fallback to text message
