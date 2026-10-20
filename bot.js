@@ -1460,6 +1460,35 @@ async function handleBroadcastCommand(chatId, username) {
   await sendMessage(chatId, message);
 }
 
+// Test broadcast: kirim hanya ke admin sendiri (untuk cek mekanisme + limit)
+async function handleTestBroadcastCommand(chatId, username) {
+  if (username !== ADMIN_USERNAME.replace('@', '')) {
+    await sendMessage(chatId, '⚠️ *Akses Ditolak*\n\nMaaf, perintah /bctest hanya dapat digunakan oleh admin bot.');
+    return;
+  }
+
+  const currentState = await storage.getBroadcastState(chatId);
+  if (currentState?.active) {
+    await sendMessage(chatId,
+      `⚠️ *Broadcast sedang berjalan!*\n\n` +
+      `🔄 Gunakan /cancel untuk membatalkan broadcast yang sedang berjalan.`
+    );
+    return;
+  }
+
+  await storage.setBroadcastState(chatId, true);
+  await storage.setChatData(chatId, { isBroadcastMode: true, isTestBroadcast: true });
+
+  await sendMessage(chatId,
+    `🧪 *Mode TEST Broadcast Aktif*\n\n` +
+    `🎯 Target: HANYA kamu sendiri (1 orang)\n\n` +
+    `📝 Kirim pesan teks atau foto untuk menguji broadcast.\n` +
+    `Hasilnya tiba via mekanisme yang sama persis (antrean KV + cron),\n` +
+    `jadi kalau ini sukses, broadcast massal tinggal soal limit Telegram.\n\n` +
+    `Gunakan /cancel untuk keluar dari mode test.`
+  );
+}
+
 // Enhanced broadcast process with real-time progress updates and better notifications
 // =====================================================
 // BROADCAST 100% CLOUDFLARE (tanpa server pihak ketiga)
@@ -1481,23 +1510,25 @@ function broadcastProgressBar(done, total) {
   return '▓'.repeat(filled) + '░'.repeat(10 - filled) + ' ' + pct + '%';
 }
 
-async function processBroadcast(chatId, message, photo = null) {
+async function processBroadcast(chatId, message, photo = null, isTest = false) {
   const startTime = Date.now();
 
   try {
     const users = await storage.getAllUsers();
 
-    if (users.length === 0) {
+    if (!isTest && users.length === 0) {
       await sendMessage(chatId, '❌ Tidak ada pengguna untuk broadcast.');
       await storage.setBroadcastState(chatId, false);
       await storage.setChatData(chatId, { isBroadcastMode: false });
       return;
     }
 
-    // Filter out admin from broadcast list
-    const userIds = users
+    // Filter out admin from broadcast list (TEST: hanya admin sendiri)
+    let userIds = users
       .map(u => String(u))
       .filter(uid => uid && uid !== String(chatId));
+
+    if (isTest) userIds = [String(chatId)];
 
     if (userIds.length === 0) {
       await sendMessage(chatId, '❌ Tidak ada pengguna untuk broadcast (selain admin).');
@@ -1528,6 +1559,7 @@ async function processBroadcast(chatId, message, photo = null) {
       sent: 0,
       failed: 0,
       cancelled: false,
+      isTest: isTest,
       statusMsgId: null,
       createdAt: new Date().toISOString()
     };
@@ -1538,7 +1570,7 @@ async function processBroadcast(chatId, message, photo = null) {
 
     const estMin = Math.ceil(userIds.length / BROADCAST_BATCH_SIZE);
     const statusRes = await sendMessage(chatId,
-      `🚀 *BROADCAST DIANTRIKAN*\n\n` +
+      (isTest ? `🧪 *TEST BROADCAST DIANTRIKAN*\n\n` : `🚀 *BROADCAST DIANTRIKAN*\n\n`) +
       `👥 Total target: ${userIds.length} pengguna\n` +
       `📸 Media: ${photo ? 'Ya' : 'Tidak'}\n` +
       `⏱ Estimasi: ~${estMin} menit (~${BROADCAST_BATCH_SIZE}/menit)\n\n` +
@@ -1629,7 +1661,7 @@ async function processOneBroadcastBatch(jobId, activeKey, job, adminChatId, fini
   const batch = job.userIds.slice(job.index, job.index + BROADCAST_BATCH_SIZE);
   if (batch.length === 0) {
     await sendMessage(adminChatId,
-      `✅ *BROADCAST SELESAI*\n\n${broadcastProgressBar(job.total, job.total)}\n\n` +
+      (job.isTest ? `🧪 *TEST BROADCAST SELESAI*\n\n` : `✅ *BROADCAST SELESAI*\n\n`) + `${broadcastProgressBar(job.total, job.total)}\n\n` +
       `✅ Terkirim: *${job.sent}*\n` +
       `❌ Gagal: *${job.failed}*\n` +
       `📊 Total: *${job.total}* pengguna`
@@ -2865,14 +2897,14 @@ async function handleRequest(request, event) {
     if (event && typeof event.waitUntil === 'function') {
       event.waitUntil((async () => {
         try {
-          await processBroadcast(chatId, text, photoId);
+          await processBroadcast(chatId, text, photoId, !!chatData?.isTestBroadcast);
         } catch (err) {
           console.error('Background broadcast failed:', err);
         }
       })());
     } else {
       // Fallback jika event tidak tersedia (mis. testing)
-      await processBroadcast(chatId, text, photoId);
+      await processBroadcast(chatId, text, photoId, !!chatData?.isTestBroadcast);
     }
     return new Response('OK', { status: 200 });
   }
@@ -3076,6 +3108,9 @@ async function handlePingCommand(chatId) {
 
   } else if (text === '/broadcast') {
     await handleBroadcastCommand(chatId, username);
+
+  } else if (text === '/bctest') {
+    await handleTestBroadcastCommand(chatId, username);
 
   } else if (text?.startsWith('/users')) {
     const arg = text.split(/\s+/)[1]?.toLowerCase() || ''; // '' | 'id' | 'ids' | 'detail'
